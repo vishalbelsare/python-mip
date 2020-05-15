@@ -583,6 +583,32 @@ class LinTerm:
         self.var = var
         self.coeff = coeff
 
+    def add(self, term: Union[LinSum, "mip.LinTerm", "mip.Var", numbers.Real],
+            mult: numbers.Real = 1.0) -> LinSum:
+        if isinstance(term, Var):
+            return LinSum([self.var, term], [self.coeff, mult])
+        elif isinstance(term, LinSum):
+            return term + self * mult
+        elif isinstance(term, LinTerm):
+            return LinSum([self.var, term.var], [self.coeff, term.coeff * mult])
+        elif isinstance(term, numbers.Real):
+            return LinSum([self.var], [self.coeff], term * mult)
+        else:
+            raise TypeError("type {} not supported".format(type(term)))
+
+    def copy(self) -> "mip.LinTerm":
+        return LinTerm(self.var, self.coeff)
+
+    def multiply(self, mult: numbers.Real = 1.0) -> "mip.LinTerm":
+        if not isinstance(mult, numbers.Real):
+            raise TypeError("Can not multiply with type {}".format(type(mult)))
+        return LinTerm(self.var, self.coeff * mult)
+
+    def to_lin_expr(self, sense: str = "") -> LinExpr:
+        return LinExpr([self.var], [self.coeff], sense=sense)
+
+    # region operators
+
     def __add__(self, other: Union["Var", LinSum, "mip.LinTerm", numbers.Real]) -> LinSum:
         return self.add(other)
 
@@ -606,6 +632,10 @@ class LinTerm:
 
     def __neg__(self) -> "LinTerm":
         return self.copy().multiply(-1)
+
+    # endregion operators
+
+    # region comparators
 
     def __eq__(self, other: Union["Var", LinSum, "mip.LinTerm", numbers.Real]) -> LinExpr:
         if isinstance(other, Var):
@@ -649,32 +679,7 @@ class LinTerm:
         else:
             raise TypeError("type {} not supported".format(type(other)))
 
-    def add(self, term: Union[LinSum, "mip.LinTerm", "mip.Var", numbers.Real],
-            mult: numbers.Real = 1.0) -> LinSum:
-        if isinstance(term, Var):
-            return LinSum([self.var, term], [self.coeff, mult])
-        elif isinstance(term, LinSum):
-            return term + self * mult
-        elif isinstance(term, LinTerm):
-            return LinSum([self.var, term.var], [self.coeff, term.coeff * mult])
-        elif isinstance(term, numbers.Real):
-            return LinSum([self.var], [self.coeff], term * mult)
-        else:
-            raise TypeError("type {} not supported".format(type(term)))
-
-    def copy(self) -> "mip.LinTerm":
-        return LinTerm(self.var, self.coeff)
-
-    def multiply(self, mult: numbers.Real = 1.0) -> "mip.LinTerm":
-        if not isinstance(mult, numbers.Real):
-            raise TypeError("Can not multiply with type {}".format(type(mult)))
-        return LinTerm(self.var, self.coeff * mult)
-
-    def to_lin_expr(self, sense: str = "") -> LinExpr:
-        return LinExpr([self.var], [self.coeff], sense=sense)
-
-    def to_lin_sum(self, sense: str = "") -> LinSum:
-        return LinSum([self.var], [self.coeff])
+    # endregion comparators
 
 
 class Constr:
@@ -747,6 +752,14 @@ class Constr:
     @expr.setter
     def expr(self, value: LinExpr):
         self.__model.solver.constr_set_expr(self, value)
+
+    @property
+    def model(self) -> "mip.Model":
+        """Model which this constraint refers to.
+
+        :rtype: mip.Model
+        """
+        return self.__model
 
     @property
     def name(self) -> str:
@@ -893,6 +906,14 @@ class Var:
     # endregion comparators
 
     # region properties
+
+    @property
+    def model(self) -> "mip.Model":
+        """Model which this variable refers to.
+
+        :rtype: mip.Model
+        """
+        return self.__model
 
     @property
     def name(self) -> str:
