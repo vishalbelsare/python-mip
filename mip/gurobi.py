@@ -528,8 +528,7 @@ class SolverGurobi(Solver):
             obj[i] * self.model.vars[i]
             for i in range(self.num_cols())
             if abs(obj[i] > 1e-20)
-        )
-        obj_expr.sense = self.get_objective_sense
+        ).to_lin_expr(self.get_objective_sense)
         return obj_expr
 
     def get_objective_const(self) -> float:

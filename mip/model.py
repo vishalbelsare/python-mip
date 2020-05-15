@@ -5,7 +5,6 @@ from typing import List, Tuple, Optional, Union, Dict, Any
 import numbers
 import mip
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -36,7 +35,7 @@ class Model:
     """
 
     def __init__(
-        self: "Model",
+        self,
         name: str = "",
         sense: str = mip.MINIMIZE,
         solver_name: str = "",
@@ -129,12 +128,21 @@ class Model:
         self.__round_int_vars = True
         self.__sol_pool_size = 10
 
-    def __del__(self: "Model"):
+    def __del__(self):
         del self.solver
 
-    def __iadd__(self: "Model", other) -> "Model":
+    def __iadd__(
+        self,
+        other: Union["mip.LinExpr", "mip.LinSum", "mip.LinTerm", "mip.Var"]
+    ) -> "mip.Model":
+        # converting LinSum or LinTerm or LinVar to LinExpr
+        if isinstance(other, (mip.LinTerm, mip.LinSum)):
+            other = other.to_lin_expr()
+        elif isinstance(other, mip.Var):
+            other = mip.LinExpr([other], [1])
+
         if isinstance(other, mip.LinExpr):
-            if len(other.sense) == 0:
+            if len(other.sense) == 0 or other.sense in (mip.MINIMIZE, mip.MAXIMIZE):
                 # adding objective function components
                 self.objective = other
             else:
@@ -142,7 +150,7 @@ class Model:
                 self.add_constr(other)
         elif isinstance(other, tuple):
             if isinstance(other[0], mip.LinExpr) and isinstance(other[1], str):
-                if len(other[0].sense) == 0:
+                if len(other[0].sense) == 0 or other[0].sense in (mip.MINIMIZE, mip.MAXIMIZE):
                     self.objective = other[0]
                 else:
                     self.add_constr(other[0], other[1])
@@ -155,7 +163,7 @@ class Model:
         return self
 
     def add_var(
-        self: "Model",
+        self,
         name: str = "",
         lb: numbers.Real = 0.0,
         ub: numbers.Real = mip.INF,
@@ -190,9 +198,7 @@ class Model:
         """
         return self.vars.add(name, lb, ub, obj, var_type, column)
 
-    def add_constr(
-        self: "Model", lin_expr: "mip.LinExpr", name: str = ""
-    ) -> "mip.Constr":
+    def add_constr(self, lin_expr: "mip.LinExpr", name: str = "") -> "mip.Constr":
         r"""Creates a new constraint (row).
 
         Adds a new constraint to the model, returning its reference.
@@ -228,12 +234,12 @@ class Model:
         """
 
         if isinstance(lin_expr, bool):
-            raise mip.InvalidLinExpr(
-                "A boolean (true/false) cannot be " "used as a constraint."
-            )
+            raise mip.InvalidLinExpr("A boolean (true/false) cannot be " "used as a constraint.")
+        elif not isinstance(lin_expr, mip.LinExpr):
+            raise TypeError("type {} not supported".format(type(objective)))
         return self.constrs.add(lin_expr, name)
 
-    def add_lazy_constr(self: "Model", expr: "mip.LinExpr"):
+    def add_lazy_constr(self, expr: "mip.LinExpr"):
         """Adds a lazy constraint
 
            A lazy constraint is a constraint that is only inserted
@@ -252,9 +258,7 @@ class Model:
         """
         self.solver.add_lazy_constr(expr)
 
-    def add_sos(
-        self: "Model", sos: List[Tuple["mip.Var", numbers.Real]], sos_type: int
-    ):
+    def add_sos(self, sos: List[Tuple["mip.Var", numbers.Real]], sos_type: int):
         r"""Adds an Special Ordered Set (SOS) to the model
 
         In models with binary variables it is often the case that from a list
@@ -295,7 +299,7 @@ class Model:
         """
         self.solver.add_sos(sos, sos_type)
 
-    def clear(self: "Model"):
+    def clear(self):
         """Clears the model
 
         All variables, constraints and parameters will be reset. In addition,
@@ -338,7 +342,7 @@ class Model:
         self._status = mip.OptimizationStatus.LOADED
         self.__threads = 0
 
-    def copy(self: "Model", solver_name: str = "") -> "Model":
+    def copy(self, solver_name: str = "") -> "Model":
         """ Creates a copy of the current model
 
         Args:
@@ -372,7 +376,7 @@ class Model:
 
         return copy
 
-    def constr_by_name(self: "Model", name: str) -> Optional["mip.Constr"]:
+    def constr_by_name(self, name: str) -> Optional["mip.Constr"]:
         """ Queries a constraint by its name
 
         Args:
@@ -388,7 +392,7 @@ class Model:
             return None
         return self.constrs[cidx]
 
-    def var_by_name(self: "Model", name: str) -> Optional["mip.Var"]:
+    def var_by_name(self, name: str) -> Optional["mip.Var"]:
         """Searchers a variable by its name
 
         :rtype: Optional[mip.Var]
@@ -402,7 +406,7 @@ class Model:
         return self.vars[v]
 
     def generate_cuts(
-        self: "Model",
+        self,
         cut_types: Optional[List["mip.CutType"]] = None,
         max_cuts: int = 8192,
         min_viol: float = 1e-4,
@@ -432,7 +436,7 @@ class Model:
         return self.solver.generate_cuts(cut_types, max_cuts)
 
     @property
-    def conflict_graph(self: "Model") -> "mip.ConflictGraph":
+    def conflict_graph(self) -> "mip.ConflictGraph":
         """Returns the :class:`~mip.ConflictGraph` of a MIP model.
 
         :rtype: mip.ConflictGraph
@@ -441,7 +445,7 @@ class Model:
         return mip.ConflictGraph(self)
 
     def optimize(
-        self: "Model",
+        self,
         max_seconds: float = mip.INF,
         max_nodes: int = mip.INF,
         max_solutions: int = mip.INF,
@@ -505,7 +509,7 @@ class Model:
 
         return self._status
 
-    def read(self: "Model", path: str):
+    def read(self, path: str):
         """Reads a MIP model or an initial feasible solution.
 
            One of  the following file name extensions should be used
@@ -573,7 +577,7 @@ class Model:
                          to indicate the file format."
         )
 
-    def relax(self: "Model"):
+    def relax(self):
         """ Relax integrality constraints of variables
 
         Changes the type of all integer and binary variables to
@@ -581,7 +585,7 @@ class Model:
         """
         self.solver.relax()
 
-    def write(self: "Model", file_path: str):
+    def write(self, file_path: str):
         """Saves a MIP model or an initial feasible solution.
 
            One of  the following file name extensions should be used
@@ -622,7 +626,7 @@ class Model:
             )
 
     @property
-    def objective_bound(self: "Model") -> Optional[numbers.Real]:
+    def objective_bound(self) -> Optional[numbers.Real]:
         """
             A valid estimate computed for the optimal solution cost,
             lower bound in the case of minimization, equals to
@@ -639,7 +643,7 @@ class Model:
         return self.solver.get_objective_bound()
 
     @property
-    def name(self: "Model") -> str:
+    def name(self) -> str:
         """The problem (instance) name
 
            This name should be used to identify the instance that this model
@@ -650,11 +654,11 @@ class Model:
         return self.solver.get_problem_name()
 
     @name.setter
-    def name(self: "Model", name: str):
+    def name(self, name: str):
         self.solver.set_problem_name(name)
 
     @property
-    def objective(self: "Model") -> "mip.LinExpr":
+    def objective(self) -> mip.LinExpr:
         """The objective function of the problem as a linear expression.
 
         Examples:
@@ -679,29 +683,33 @@ class Model:
 
     @objective.setter
     def objective(
-        self: "Model", objective: Union[numbers.Real, "mip.Var", "mip.LinExpr"]
+        self, objective: Union[mip.LinExpr, mip.LinSum, mip.LinTerm, mip.Var, numbers.Real]
     ):
         if isinstance(objective, numbers.Real):
-            self.solver.set_objective(mip.LinExpr([], [], objective))
+            self.solver.set_objective(mip.LinExpr(const=objective))
         elif isinstance(objective, mip.Var):
             self.solver.set_objective(mip.LinExpr([objective], [1]))
         elif isinstance(objective, mip.LinExpr):
             self.solver.set_objective(objective)
+        elif isinstance(objective, mip.LinSum):
+            self.solver.set_objective(objective.to_lin_expr())
+        elif isinstance(objective, mip.LinTerm):
+            self.solver.set_objective(objective.to_lin_expr())
         else:
             raise TypeError("type {} not supported".format(type(objective)))
 
     @property
-    def verbose(self: "Model") -> int:
+    def verbose(self) -> int:
         """0 to disable solver messages printed on the screen, 1 to enable
         """
         return self.solver.get_verbose()
 
     @verbose.setter
-    def verbose(self: "Model", verbose: int):
+    def verbose(self, verbose: int):
         self.solver.set_verbose(verbose)
 
     @property
-    def lp_method(self: "Model") -> mip.LP_Method:
+    def lp_method(self) -> mip.LP_Method:
         """Which  method should be used to solve the linear programming
         problem. If the problem has integer variables that this affects only
         the solution of the first linear programming relaxation.
@@ -711,11 +719,11 @@ class Model:
         return self.__lp_method
 
     @lp_method.setter
-    def lp_method(self: "Model", lpm: mip.LP_Method):
+    def lp_method(self, lpm: mip.LP_Method):
         self.__lp_method = lpm
 
     @property
-    def threads(self: "Model") -> int:
+    def threads(self) -> int:
         r"""number of threads to be used when solving the problem.
         0 uses solver default configuration, -1 uses the number of available
         processing cores and :math:`\geq 1` uses the specified number of
@@ -724,11 +732,11 @@ class Model:
         return self.__threads
 
     @threads.setter
-    def threads(self: "Model", threads: int):
+    def threads(self, threads: int):
         self.__threads = threads
 
     @property
-    def sense(self: "Model") -> str:
+    def sense(self) -> str:
         """ The optimization sense
 
         Returns:
@@ -738,28 +746,28 @@ class Model:
         return self.solver.get_objective_sense()
 
     @sense.setter
-    def sense(self: "Model", sense: str):
+    def sense(self, sense: str):
         self.solver.set_objective_sense(sense)
 
     @property
-    def objective_const(self: "Model") -> float:
+    def objective_const(self) -> float:
         """Returns the constant part of the objective function
         """
         return self.solver.get_objective_const()
 
     @objective_const.setter
-    def objective_const(self: "Model", objective_const: float):
+    def objective_const(self, objective_const: float):
         self.solver.set_objective_const(objective_const)
 
     @property
-    def objective_value(self: "Model") -> Optional[numbers.Real]:
+    def objective_value(self) -> Optional[numbers.Real]:
         """Objective function value of the solution found or None
         if model was not optimized
         """
         return self.solver.get_objective_value()
 
     @property
-    def gap(self: "Model") -> float:
+    def gap(self) -> float:
         r"""
            The optimality gap considering the cost of the best solution found
            (:attr:`~mip.Model.objective_value`)
@@ -772,7 +780,7 @@ class Model:
         return self.__gap
 
     @property
-    def search_progress_log(self: "Model") -> mip.ProgressLog:
+    def search_progress_log(self) -> mip.ProgressLog:
         """
             Log of bound improvements in the search.
             The output of MIP solvers is a sequence of improving
@@ -796,7 +804,7 @@ class Model:
         return self.__plog
 
     @property
-    def store_search_progress_log(self: "Model") -> bool:
+    def store_search_progress_log(self) -> bool:
         """
             Wether :attr:`~mip.Model.search_progress_log` will be stored
             or not when optimizing. Default False. Activate it if you want to
@@ -804,7 +812,7 @@ class Model:
         return self.__store_search_progress_log
 
     @store_search_progress_log.setter
-    def store_search_progress_log(self: "Model", store: bool):
+    def store_search_progress_log(self, store: bool):
         self.__store_search_progress_log = store
 
     # def plot_bounds_evolution(self):
@@ -822,7 +830,7 @@ class Model:
     #    plt.show()
 
     @property
-    def num_solutions(self: "Model") -> int:
+    def num_solutions(self) -> int:
         """Number of solutions found during the MIP search
 
         Returns:
@@ -832,7 +840,7 @@ class Model:
         return self.solver.get_num_solutions()
 
     @property
-    def objective_values(self: "Model") -> List[numbers.Real]:
+    def objective_values(self) -> List[numbers.Real]:
         """List of costs of all solutions in the solution pool
 
         Returns:
@@ -846,7 +854,7 @@ class Model:
         ]
 
     @property
-    def cuts_generator(self: "Model") -> Optional["mip.ConstrsGenerator"]:
+    def cuts_generator(self) -> Optional["mip.ConstrsGenerator"]:
         """A cuts generator is an :class:`~mip.ConstrsGenerator`
         object that receives a fractional solution and tries to generate one or
         more constraints (cuts) to remove it. The cuts generator is called in
@@ -860,13 +868,13 @@ class Model:
 
     @cuts_generator.setter
     def cuts_generator(
-        self: "Model", cuts_generator: Optional["mip.ConstrsGenerator"]
+        self, cuts_generator: Optional["mip.ConstrsGenerator"]
     ):
         self.__cuts_generator = cuts_generator
 
     @property
     def lazy_constrs_generator(
-        self: "Model",
+        self,
     ) -> Optional["mip.ConstrsGenerator"]:
         """A lazy constraints generator is an
         :class:`~mip.ConstrsGenerator` object that receives
@@ -887,12 +895,12 @@ class Model:
 
     @lazy_constrs_generator.setter
     def lazy_constrs_generator(
-        self: "Model", lazy_constrs_generator: Optional["mip.ConstrsGenerator"]
+        self, lazy_constrs_generator: Optional["mip.ConstrsGenerator"]
     ):
         self.__lazy_constrs_generator = lazy_constrs_generator
 
     @property
-    def emphasis(self: "Model") -> "mip.SearchEmphasis":
+    def emphasis(self) -> "mip.SearchEmphasis":
         """defines the main objective of the search, if set to 1 (FEASIBILITY)
         then the search process will focus on try to find quickly feasible
         solutions and improving them; if set to 2 (OPTIMALITY) then the
@@ -909,33 +917,33 @@ class Model:
         return self.solver.get_emphasis()
 
     @emphasis.setter
-    def emphasis(self: "Model", emphasis: mip.SearchEmphasis):
+    def emphasis(self, emphasis: mip.SearchEmphasis):
         self.solver.set_emphasis(emphasis)
 
     @property
-    def preprocess(self: "Model") -> int:
+    def preprocess(self) -> int:
         """Enables/disables pre-processing. Pre-processing tries to improve
         your MIP formulation. -1 means automatic, 0 means off and 1
         means on."""
         return self.__preprocess
 
     @preprocess.setter
-    def preprocess(self: "Model", prep: int):
+    def preprocess(self, prep: int):
         self.__preprocess = prep
 
     @property
-    def pump_passes(self: "Model") -> int:
+    def pump_passes(self) -> int:
         """Number of passes of the Feasibility Pump [FGL05]_ heuristic.
            You may increase this value if you are not getting feasible
            solutions."""
         return self.solver.get_pump_passes()
 
     @pump_passes.setter
-    def pump_passes(self: "Model", passes: int):
+    def pump_passes(self, passes: int):
         self.solver.set_pump_passes(passes)
 
     @property
-    def cuts(self: "Model") -> int:
+    def cuts(self) -> int:
         """Controls the generation of cutting planes, -1 means automatic, 0
         disables completely, 1 (default) generates cutting planes in a moderate
         way, 2 generates cutting planes aggressively and 3 generates even more
@@ -947,11 +955,11 @@ class Model:
         return self.__cuts
 
     @cuts.setter
-    def cuts(self: "Model", gencuts: int):
+    def cuts(self, gencuts: int):
         self.__cuts = gencuts
 
     @property
-    def cut_passes(self: "Model") -> int:
+    def cut_passes(self) -> int:
         """Maximum number of rounds of cutting planes. You may set this
         parameter to low values if you see that a significant amount of
         time is being spent generating cuts without any improvement in
@@ -960,22 +968,22 @@ class Model:
         return self.__cut_passes
 
     @cut_passes.setter
-    def cut_passes(self: "Model", cp: int):
+    def cut_passes(self, cp: int):
         self.__cut_passes = cp
 
     @property
-    def clique(self: "Model") -> int:
+    def clique(self) -> int:
         """Controls the generation of clique cuts. -1 means automatic,
         0 disables it, 1 enables it and 2 enables more aggressive clique
         generation."""
         return self.__clique
 
     @clique.setter
-    def clique(self: "Model", clq: int):
+    def clique(self, clq: int):
         self.__clique = clq
 
     @property
-    def start(self: "Model") -> Optional[List[Tuple["mip.Var", numbers.Real]]]:
+    def start(self) -> Optional[List[Tuple["mip.Var", numbers.Real]]]:
         """Initial feasible solution
 
         Enters an initial feasible solution. Only the main binary/integer
@@ -989,13 +997,13 @@ class Model:
 
     @start.setter
     def start(
-        self: "Model", start: Optional[List[Tuple["mip.Var", numbers.Real]]]
+        self, start: Optional[List[Tuple["mip.Var", numbers.Real]]]
     ):
         self.__start = start
         if start is not None:
             self.solver.set_start(start)
 
-    def validate_mip_start(self: "Model"):
+    def validate_mip_start(self):
         """Validates solution entered in MIPStart
 
         If the solver engine printed messages indicating that the initial
@@ -1049,27 +1057,27 @@ class Model:
         logger.info("MIP model may still be infeasible.")
 
     @property
-    def num_cols(self: "Model") -> int:
+    def num_cols(self) -> int:
         """number of columns (variables) in the model"""
         return len(self.vars)
 
     @property
-    def num_int(self: "Model") -> int:
+    def num_int(self) -> int:
         """number of integer variables in the model"""
         return self.solver.num_int()
 
     @property
-    def num_rows(self: "Model") -> int:
+    def num_rows(self) -> int:
         """number of rows (constraints) in the model"""
         return len(self.constrs)
 
     @property
-    def num_nz(self: "Model") -> int:
+    def num_nz(self) -> int:
         """number of non-zeros in the constraint matrix"""
         return self.solver.num_nz()
 
     @property
-    def cutoff(self: "Model") -> numbers.Real:
+    def cutoff(self) -> numbers.Real:
         """upper limit for the solution cost, solutions with cost > cutoff
         will be removed from the search space, a small cutoff value may
         significantly speedup the search, but if cutoff is set to a value too
@@ -1077,11 +1085,11 @@ class Model:
         return self.solver.get_cutoff()
 
     @cutoff.setter
-    def cutoff(self: "Model", cutoff: float):
+    def cutoff(self, cutoff: float):
         self.solver.set_cutoff(cutoff)
 
     @property
-    def integer_tol(self: "Model") -> float:
+    def integer_tol(self) -> float:
         """Maximum distance to the nearest integer for a variable to be
         considered with an integer value. Default value: 1e-6. Tightening this
         value can increase the numerical precision but also probably increase
@@ -1091,11 +1099,11 @@ class Model:
         return self.__integer_tol
 
     @integer_tol.setter
-    def integer_tol(self: "Model", int_tol: float):
+    def integer_tol(self, int_tol: float):
         self.__integer_tol = int_tol
 
     @property
-    def infeas_tol(self: "Model") -> float:
+    def infeas_tol(self) -> float:
         """Maximum allowed violation for constraints. Default value: 1e-6.
         Tightening this value can increase the numerical precision but also
         probably increase the running time. As floating point computations
@@ -1105,11 +1113,11 @@ class Model:
         return self.__infeas_tol
 
     @infeas_tol.setter
-    def infeas_tol(self: "Model", inf_tol: float):
+    def infeas_tol(self, inf_tol: float):
         self.__infeas_tol = inf_tol
 
     @property
-    def opt_tol(self: "Model") -> float:
+    def opt_tol(self) -> float:
         """Maximum reduced cost value for a solution of the LP relaxation to be
         considered optimal. Default value: 1e-6.  Tightening this value can
         increase the numerical precision but also probably increase the running
@@ -1119,11 +1127,11 @@ class Model:
         return self.__opt_tol
 
     @opt_tol.setter
-    def opt_tol(self: "Model", tol: float):
+    def opt_tol(self, tol: float):
         self.__opt_tol = tol
 
     @property
-    def max_mip_gap_abs(self: "Model") -> float:
+    def max_mip_gap_abs(self) -> float:
         """Tolerance for the quality of the optimal solution, if a solution
         with cost :math:`c` and a lower bound :math:`l` are available and
         :math:`c-l<` :code:`mip_gap_abs`, the search will be concluded, see
@@ -1132,11 +1140,11 @@ class Model:
         return self.__max_mip_gap_abs
 
     @max_mip_gap_abs.setter
-    def max_mip_gap_abs(self: "Model", max_mip_gap_abs: float):
+    def max_mip_gap_abs(self, max_mip_gap_abs: float):
         self.__max_mip_gap_abs = max_mip_gap_abs
 
     @property
-    def max_mip_gap(self: "Model") -> float:
+    def max_mip_gap(self) -> float:
         """value indicating the tolerance for the maximum percentage deviation
         from the optimal solution cost, if a solution with cost :math:`c` and
         a lower bound :math:`l` are available and
@@ -1145,39 +1153,39 @@ class Model:
         return self.__max_mip_gap
 
     @max_mip_gap.setter
-    def max_mip_gap(self: "Model", max_mip_gap: float):
+    def max_mip_gap(self, max_mip_gap: float):
         self.__max_mip_gap = max_mip_gap
 
     @property
-    def max_seconds(self: "Model") -> float:
+    def max_seconds(self) -> float:
         """time limit in seconds for search"""
         return self.solver.get_max_seconds()
 
     @max_seconds.setter
-    def max_seconds(self: "Model", max_seconds: float):
+    def max_seconds(self, max_seconds: float):
         self.solver.set_max_seconds(max_seconds)
 
     @property
-    def max_nodes(self: "Model") -> int:
+    def max_nodes(self) -> int:
         """maximum number of nodes to be explored in the search tree"""
         return self.solver.get_max_nodes()
 
     @max_nodes.setter
-    def max_nodes(self: "Model", max_nodes: int):
+    def max_nodes(self, max_nodes: int):
         self.solver.set_max_nodes(max_nodes)
 
     @property
-    def max_solutions(self: "Model") -> int:
+    def max_solutions(self) -> int:
         """solution limit, search will be stopped when :code:`max_solutions`
         were found"""
         return self.solver.get_max_solutions()
 
     @max_solutions.setter
-    def max_solutions(self: "Model", max_solutions: int):
+    def max_solutions(self, max_solutions: int):
         self.solver.set_max_solutions(max_solutions)
 
     @property
-    def seed(self: "Model") -> int:
+    def seed(self) -> int:
         """Random seed. Small changes in the first decisions while solving the LP
         relaxation and the MIP can have a large impact in the performance,
         as discussed in [Fisch14]_. This behaviour can be exploited with multiple
@@ -1186,11 +1194,11 @@ class Model:
         return self.__seed
 
     @seed.setter
-    def seed(self: "Model", seed: int):
+    def seed(self, seed: int):
         self.__seed = seed
 
     @property
-    def round_int_vars(self: "Model") -> bool:
+    def round_int_vars(self) -> bool:
         """MIP solvers perform computations using *limited precision* arithmetic.
         Thus a variable with value 0 may appear in the solution as
         0.000000000001. Thus, comparing this var to zero would return false.
@@ -1204,11 +1212,11 @@ class Model:
         return self.__round_int_vars
 
     @round_int_vars.setter
-    def round_int_vars(self: "Model", round_iv: bool):
+    def round_int_vars(self, round_iv: bool):
         self.__round_int_vars = round_iv
 
     @property
-    def sol_pool_size(self: "Model") -> int:
+    def sol_pool_size(self) -> int:
         """Size of the solution pool, i.e.: maximum number of solutions
         that will be stored during the search. To check how many solutions were
         found during the search use :meth:`~mip.Model.num_solutions`.
@@ -1216,13 +1224,13 @@ class Model:
         return self.__sol_pool_size
 
     @sol_pool_size.setter
-    def sol_pool_size(self: "Model", sol_pool_size: int):
+    def sol_pool_size(self, sol_pool_size: int):
         if sol_pool_size < 1:
             raise ValueError("Pool size must be at least one.")
         self.__sol_pool_size = sol_pool_size
 
     @property
-    def status(self: "Model") -> mip.OptimizationStatus:
+    def status(self) -> mip.OptimizationStatus:
         """ optimization status, which can be OPTIMAL(0), ERROR(-1),
         INFEASIBLE(1), UNBOUNDED(2). When optimizing problems
         with integer variables some additional cases may happen, FEASIBLE(3)
@@ -1236,7 +1244,7 @@ class Model:
         """
         return self._status
 
-    def add_cut(self: "Model", cut: "mip.LinExpr"):
+    def add_cut(self, cut: "mip.LinExpr"):
 
         """Adds a violated inequality (cutting plane) to the linear programming
         model. If called outside the cut callback performs exactly as
@@ -1252,7 +1260,7 @@ class Model:
         self.solver.add_cut(cut)
 
     def remove(
-        self: "Model",
+        self,
         objects: Union[
             mip.Var, mip.Constr, List[Union["mip.Var", "mip.Constr"]]
         ],
@@ -1291,7 +1299,7 @@ class Model:
             )
 
     def translate(
-        self: "Model", ref
+        self, ref
     ) -> Union[List[Any], Dict[Any, Any], "mip.Var"]:
         """Translates references of variables/containers of variables
         from another model to this model. Can be used to translate
@@ -1369,7 +1377,9 @@ class Model:
                         )
 
 
-def maximize(objective: Union["mip.LinExpr", "mip.Var"]) -> "mip.LinExpr":
+def maximize(
+    objective: Union["mip.LinExpr", "mip.LinSum", "mip.LinTerm", "mip.Var"]
+) -> "mip.LinExpr":
     """
     Function that should be used to set the objective function to MAXIMIZE
     a given linear expression (passed as argument).
@@ -1381,11 +1391,15 @@ def maximize(objective: Union["mip.LinExpr", "mip.Var"]) -> "mip.LinExpr":
     """
     if isinstance(objective, mip.Var):
         objective = mip.LinExpr([objective], [1.0])
+    elif isinstance(objective, (mip.LinSum, mip.LinTerm)):
+        objective = objective.to_lin_expr()
     objective.sense = mip.MAXIMIZE
     return objective
 
 
-def minimize(objective: Union["mip.LinExpr", "mip.Var"]) -> "mip.LinExpr":
+def minimize(
+    objective: Union["mip.LinExpr", "mip.LinSum", "mip.LinTerm", "mip.Var"]
+) -> "mip.LinExpr":
     """
     Function that should be used to set the objective function to MINIMIZE
     a given linear expression (passed as argument).
@@ -1397,11 +1411,13 @@ def minimize(objective: Union["mip.LinExpr", "mip.Var"]) -> "mip.LinExpr":
     """
     if isinstance(objective, mip.Var):
         objective = mip.LinExpr([objective], [1.0])
+    elif isinstance(objective, (mip.LinSum, mip.LinTerm)):
+        objective = objective.to_lin_expr()
     objective.sense = mip.MINIMIZE
     return objective
 
 
-def xsum(terms) -> "mip.LinExpr":
+def xsum(terms) -> "mip.LinSum":
     """
     Function that should be used to create a linear expression from a
     summation. While the python function sum() can also be used, this
@@ -1413,9 +1429,9 @@ def xsum(terms) -> "mip.LinExpr":
 
     :rtype: mip.LinExpr
     """
-    result = mip.LinExpr()
+    result = mip.LinSum()
     for term in terms:
-        result.add_term(term)
+        result.add(term)
     return result
 
 

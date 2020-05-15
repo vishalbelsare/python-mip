@@ -797,7 +797,7 @@ class SolverCbc(Solver):
                 if abs(obj[j]) >= 1e-15
             )
             + self._objconst
-        )
+        ).to_lin_expr(self.get_objective_sense())
 
     def set_objective(self, lin_expr: "LinExpr", sense: str = "") -> None:
         # collecting variable coefficients

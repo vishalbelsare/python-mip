@@ -4,7 +4,7 @@ from mip.callbacks import *
 from mip.log import ProgressLog
 from mip.lists import ConstrList, VarList, VConstrList, VVarList
 from mip.exceptions import *
-from mip.entities import Column, Constr, LinExpr, Var, ConflictGraph
+from mip.entities import Column, Constr, LinExpr, LinSum, LinTerm, Var, ConflictGraph
 from mip.model import *
 
 __version__ = VERSION
