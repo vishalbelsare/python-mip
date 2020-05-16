@@ -135,11 +135,19 @@ class Model:
         self,
         other: Union["mip.LinExpr", "mip.LinSum", "mip.LinTerm", "mip.Var"]
     ) -> "mip.Model":
+        if not other:
+            return self
+
         # converting LinSum or LinTerm or LinVar to LinExpr
         if isinstance(other, (mip.LinTerm, mip.LinSum)):
             other = other.to_lin_expr()
         elif isinstance(other, mip.Var):
             other = mip.LinExpr([other], [1])
+        elif isinstance(other, tuple):
+            if isinstance(other[0], (mip.LinTerm, mip.LinSum)):
+                other[0] = other[0].to_lin_expr()
+            elif isinstance(other[0], mip.Var):
+                other[0] = mip.LinExpr([other[0]], [1])
 
         if isinstance(other, mip.LinExpr):
             if len(other.sense) == 0 or other.sense in (mip.MINIMIZE, mip.MAXIMIZE):
