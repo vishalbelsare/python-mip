@@ -5,9 +5,12 @@ from typing import List, Tuple
 from os.path import isfile
 import os.path
 from glob import glob
+import re
 from os import environ
 import numbers
 from cffi import FFI
+import importlib.util
+import pathlib
 from mip.exceptions import (
     ParameterNotAvailable,
     SolutionNotAvailable,
@@ -43,40 +46,34 @@ logger = logging.getLogger(__name__)
 
 ffi = FFI()
 CData = ffi.CData
-os_is_64_bit = maxsize > 2 ** 32
+os_is_64_bit = maxsize > 2**32
 INF = float("inf")
 MAX_NAME_SIZE = 512  # for variables and constraints
 
 lib_path = None
+has_gurobi = False
 
 if "GUROBI_HOME" in environ:
     if platform.lower().startswith("win"):
-        libfile = glob(
-            os.path.join(os.environ["GUROBI_HOME"], "bin\\gurobi[0-9][0-9].dll")
-        )
+        lib_path_dir = os.path.join(os.environ["GUROBI_HOME"], "bin", "*")
+        pattern = r"gurobi([0-9]{2,3}).dll"
+
     else:
-        libfile = glob(
-            os.path.join(os.environ["GUROBI_HOME"], "lib/libgurobi[0-9][0-9].*")
-        )
-        if not libfile:
-            libfile = glob(
-                os.path.join(
-                    os.environ["GUROBI_HOME"],
-                    "lib/libgurobi.so.[0-9].[0-9].*",
-                )
-            )
+        lib_path_dir = os.path.join(os.environ["GUROBI_HOME"], "lib", "*")
+        pattern = r"libgurobi([0-9]{2,3})[.].*"
 
-    if libfile:
-        lib_path = libfile[0]
+    for libfile in glob(lib_path_dir):
+        match = re.match(pattern, os.path.basename(libfile))
+        if match:
+            lib_path = libfile
 
-    # checking gurobi version
-    s1 = lib_path.split('"')[-1].split("/")[-1]
-    vs = [c for c in s1 if c.isdigit()]
-    major_ver = vs[0]
-    minor_ver = vs[1]
+            # checking gurobi version
+            major_ver = match.group(1)[:-1]
+            minor_ver = match.group(1)[-1]
+            break
 
 if lib_path is None:
-    for major_ver in reversed(range(6, 10)):
+    for major_ver in reversed(range(6, 11)):
         for minor_ver in reversed(range(0, 11)):
             lib_path = find_library("gurobi{}{}".format(major_ver, minor_ver))
             if lib_path is not None:
@@ -84,10 +81,22 @@ if lib_path is None:
         if lib_path is not None:
             break
 
+# Check for gurobi through pip installation
 if lib_path is None:
-    found = False
+    gurobipy_spec = importlib.util.find_spec("gurobipy")
+    if gurobipy_spec:
+        parent_path = pathlib.Path(gurobipy_spec.origin).parent
+        if platform.lower().startswith("win"):
+            extension = ".dll"
+        else:
+            extension = ".so"
+        lib_path = str(next(parent_path.glob(f"*{extension}")))
+
+
+if lib_path is None:
+    has_gurobi = False
 else:
-    found = True
+    has_gurobi = True
     grblib = ffi.dlopen(lib_path)
 
     ffi.cdef(
@@ -262,6 +271,7 @@ else:
     GRBsetdblattrelement = grblib.GRBsetdblattrelement
     GRBsetintattr = grblib.GRBsetintattr
     GRBsetintattrelement = grblib.GRBsetintattrelement
+    GRBgetintattrelement = grblib.GRBgetintattrelement
     GRBsetdblattr = grblib.GRBsetdblattr
     GRBgetintattr = grblib.GRBgetintattr
     GRBgetintparam = grblib.GRBgetintparam
@@ -330,7 +340,7 @@ class SolverGurobi(Solver):
     def __init__(self, model: Model, name: str, sense: str, modelp: CData = ffi.NULL):
         """modelp should be informed if a model should not be created,
         but only allow access to an existing one"""
-        if not found:
+        if not has_gurobi:
             raise FileNotFoundError(
                 """Gurobi not found. Plase check if the
             Gurobi dynamic loadable library is reachable or define
@@ -347,6 +357,7 @@ class SolverGurobi(Solver):
         self._model = ffi.NULL
         self._callback = None
         self._ownsModel = True
+        self._venv_loaded = False
         self._nlazy = 0
 
         if modelp == ffi.NULL:
@@ -388,6 +399,7 @@ class SolverGurobi(Solver):
             self._model = modelp
             self._env = GRBgetenv(self._model)
 
+        self._venv_loaded = True
         # default number of threads
         self.__threads = 0
 
@@ -420,7 +432,7 @@ class SolverGurobi(Solver):
         if self._ownsModel:
             if self._model:
                 GRBfreemodel(self._model)
-            if self._env:
+            if self._env and self._venv_loaded:
                 GRBfreeenv(self._env)
 
     def add_var(
@@ -523,9 +535,10 @@ class SolverGurobi(Solver):
         obj_expr = xsum(
             obj[i] * self.model.vars[i]
             for i in range(self.num_cols())
-            if abs(obj[i] > 1e-20)
+            if abs(obj[i]) > 1e-20
         )
-        obj_expr.sense = self.get_objective_sense
+        obj_expr.add_const(self.get_objective_const())
+        obj_expr.sense = self.get_objective_sense()
         return obj_expr
 
     def get_objective_const(self) -> float:
@@ -763,7 +776,14 @@ class SolverGurobi(Solver):
         if status == 3:  # INFEASIBLE
             return OptimizationStatus.INFEASIBLE
         if status == 4:  # INF_OR_UNBD
-            return OptimizationStatus.UNBOUNDED
+            # Special case by gurobi, where an additional run has to be made
+            # to determine infeasibility or unbounded problem
+            # For this run dual reductions must be disabled
+            # See gurobi support article online - How do I resolve the error "Model is infeasible or unbounded"?
+            # self.set_int_param("DualReductions", 0)
+            # GRBoptimize(self._model)
+            # return OptimizationStatus.INFEASIBLE if self.get_int_attr("Status") == 3 else OptimizationStatus.UNBOUNDED
+            return OptimizationStatus.INF_OR_UNBD
         if status == 5:  # UNBOUNDED
             return OptimizationStatus.UNBOUNDED
         if status == 6:  # CUTOFF
@@ -1240,6 +1260,15 @@ class SolverGurobi(Solver):
                 )
             )
 
+    def get_int_attr_element(self, name: str, index: int) -> float:
+        res = ffi.new("int *")
+        error = GRBgetintattrelement(self._model, name.encode("utf-8"), index, res)
+        if error != 0:
+            raise ParameterNotAvailable(
+                "Error get grb double attr element {} index {}".format(name, index)
+            )
+        return res[0]
+
     def set_int_attr_element(self, name: str, index: int, value: int):
         error = GRBsetintattrelement(self._model, name.encode("utf-8"), index, value)
         if error != 0:
@@ -1263,6 +1292,7 @@ class SolverGurobi(Solver):
             raise ParameterNotAvailable(
                 "Error modifying double attribute {} to {}".format(name, value)
             )
+        GRBupdatemodel(self._model)
 
     def get_int_attr(self, name: str) -> int:
         res = ffi.new("int *")

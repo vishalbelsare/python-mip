@@ -4,7 +4,11 @@ from os.path import isfile
 from typing import List, Tuple, Optional, Union, Dict, Any
 import numbers
 import mip
-from .version import version
+
+try:
+    from ._version import __version__
+except ImportError:
+    __version__ = "unknown"
 
 logger = logging.getLogger(__name__)
 
@@ -87,11 +91,14 @@ class Model:
                 import mip.cbc
 
                 self.solver = mip.cbc.SolverCbc(self, name, sense)
+            elif self.solver_name.upper() == "HIGHS":
+                import mip.highs
+
+                self.solver = mip.highs.SolverHighs(self, name, sense)
             else:
                 import mip.gurobi
 
-                if mip.gurobi.found:
-
+                if mip.gurobi.has_gurobi:
                     self.solver = mip.gurobi.SolverGurobi(self, name, sense)
                     self.solver_name = mip.GUROBI
                 else:
@@ -331,11 +338,7 @@ class Model:
             raise mip.InvalidLinExpr(
                 "A boolean (true/false) cannot be used as a constraint."
             )
-        # TODO: some tests use empty linear constraints, which ideally should not happen
-        # if len(lin_expr) == 0:
-        #     raise mip.InvalidLinExpr(
-        #         "An empty linear expression cannot be used as a constraint."
-        #     )
+
         return self.constrs.add(lin_expr, name, priority)
 
     def add_lazy_constr(self: "Model", expr: "mip.LinExpr"):
@@ -394,11 +397,15 @@ class Model:
             import mip.cbc
 
             self.solver = mip.cbc.SolverCbc(self, self.name, sense)
+        elif self.solver_name.upper() == "HIGHS":
+            import mip.highs
+
+            self.solver = mip.highs.SolverHighs(self, self.name, sense)
         else:
             # checking which solvers are available
             import mip.gurobi
 
-            if mip.gurobi.found:
+            if mip.gurobi.has_gurobi:
                 self.solver = mip.gurobi.SolverGurobi(self, self.name, sense)
                 self.solver_name = mip.GUROBI
             else:
@@ -616,8 +623,15 @@ class Model:
         )
 
         self._status = self.solver.optimize(relax)
-        # has a solution and is a MIP
-        if self.num_solutions and self.num_int > 0:
+        # has a solution
+        if (
+            self._status
+            in (
+                mip.OptimizationStatus.OPTIMAL,
+                mip.OptimizationStatus.FEASIBLE,
+            )
+            and self.num_int > 0
+        ):
             best = self.objective_value
             lb = self.objective_bound
             if abs(best) <= 1e-10:
@@ -1420,8 +1434,7 @@ class Model:
         else:
             raise TypeError(
                 "Cannot handle removal of object of type "
-                + type(objects)
-                + " from model."
+                "{} from model".format(type(objects))
             )
 
     def translate(self: "Model", ref) -> Union[List[Any], Dict[Any, Any], "mip.Var"]:
@@ -1624,7 +1637,7 @@ def read_custom_settings():
                         customCbcLib = cols[1].lstrip().rstrip().replace('"', "")
 
 
-logger.info("Using Python-MIP package version {}".format(version))
+logger.info("Using Python-MIP package version {}".format(__version__))
 customCbcLib = ""
 read_custom_settings()
 

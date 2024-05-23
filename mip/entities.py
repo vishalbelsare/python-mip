@@ -118,20 +118,6 @@ class LinExpr:
     ) -> "mip.LinExpr":
         return self.__add__(other)
 
-    def __iadd__(
-        self,
-        other: Union["mip.Var", "mip.LinExpr", numbers.Real],
-    ) -> "mip.LinExpr":
-        if isinstance(other, Var):
-            self.add_var(other, 1)
-        elif isinstance(other, LinExpr):
-            self.add_expr(other)
-        elif isinstance(other, numbers.Real):
-            self.add_const(other)
-        else:
-            raise TypeError("type {} not supported".format(type(other)))
-        return self
-
     def __sub__(
         self,
         other: Union["mip.Var", "mip.LinExpr", numbers.Real],
@@ -153,27 +139,11 @@ class LinExpr:
     ) -> "mip.LinExpr":
         return (-self).__add__(other)
 
-    def __isub__(
-        self,
-        other: Union["mip.Var", "mip.LinExpr", numbers.Real],
-    ) -> "mip.LinExpr":
-        if isinstance(other, Var):
-            self.add_var(other, -1)
-        elif isinstance(other, LinExpr):
-            self.add_expr(other, -1)
-        elif isinstance(other, numbers.Real):
-            self.add_const(-other)
-        else:
-            raise TypeError("type {} not supported".format(type(other)))
-        return self
-
-    def __mul__(self, other: numbers.Real) -> Union["mip.LinExpr", numbers.Real]:
+    def __mul__(self, other: numbers.Real) -> "mip.LinExpr":
         if not isinstance(other, numbers.Real):
             raise TypeError("Can not multiply with type {}".format(type(other)))
 
-        if fabs(other) < mip.EPS:
-            return other
-        elif fabs(other - 1) < mip.EPS:
+        if fabs(other - 1) < mip.EPS:
             return self
 
         result = self.copy()
@@ -185,50 +155,12 @@ class LinExpr:
     def __rmul__(self, other: numbers.Real) -> "mip.LinExpr":
         return self.__mul__(other)
 
-    def __imul__(self, other: numbers.Real) -> "mip.LinExpr":
-        if not isinstance(other, numbers.Real):
-            raise TypeError("Can not multiply with type {}".format(type(other)))
-
-        if fabs(other) < mip.EPS:
-            self.__const = 0.0
-            self.__expr = {}  # type: Dict[mip.Var, numbers.Real]
-            return self
-        elif fabs(other - 1) < mip.EPS:
-            return self
-
-        self.__const *= other
-        for var in self.__expr.keys():
-            self.__expr[var] *= other
-        return self
-
     def __truediv__(self, other: numbers.Real) -> "mip.LinExpr":
         if not isinstance(other, numbers.Real):
             raise TypeError("Can not divide with type {}".format(type(other)))
-
         if fabs(other) < mip.EPS:
-            raise ZeroDivisionError()
-        elif fabs(other - 1) < mip.EPS:
-            return self
-
-        result = self.copy()
-        result.__const /= other
-        for var in result.__expr.keys():
-            result.__expr[var] /= other
-        return result
-
-    def __itruediv__(self, other: numbers.Real) -> "mip.LinExpr":
-        if not isinstance(other, numbers.Real):
-            raise TypeError("Can not divide with type {}".format(type(other)))
-
-        if fabs(other) < mip.EPS:
-            raise ZeroDivisionError()
-        elif fabs(other - 1) < mip.EPS:
-            return self
-
-        self.__const /= other
-        for var in self.__expr.keys():
-            self.__expr[var] /= other
-        return self
+            raise ZeroDivisionError("Expression division by zero")
+        return self.__mul__(1.0 / other)
 
     def __neg__(self) -> "LinExpr":
         return self.__mul__(-1)
@@ -295,7 +227,7 @@ class LinExpr:
 
     def add_const(self, val: numbers.Real):
         """adds a constant value to the linear expression, in the case of
-        a constraint this correspond to the right-hand-side
+        a constraint this corresponds to the right-hand-side
 
         Args:
             val(numbers.Real): a real number
@@ -334,7 +266,7 @@ class LinExpr:
         elif isinstance(term, LinExpr):
             self.add_expr(term, coeff)
         elif isinstance(term, numbers.Real):
-            self.add_const(term)
+            self.add_const(term * coeff)
         else:
             raise TypeError("type {} not supported".format(type(term)))
 
@@ -345,13 +277,8 @@ class LinExpr:
             var (mip.Var) : a variable
             coeff (numbers.Real) : coefficient which the variable will be added
         """
-        if var in self.__expr:
-            if -mip.EPS <= self.__expr[var] + coeff <= mip.EPS:
-                del self.__expr[var]
-            else:
-                self.__expr[var] += coeff
-        else:
-            self.__expr[var] = coeff
+        self.__expr.setdefault(var, 0)
+        self.__expr[var] += coeff
 
     def set_expr(self: "LinExpr", expr: Dict["mip.Var", numbers.Real]):
         """Sets terms of the linear expression
@@ -364,11 +291,7 @@ class LinExpr:
         self.__expr = expr
 
     def copy(self) -> "mip.LinExpr":
-        copy = LinExpr()
-        copy.__const = self.__const
-        copy.__expr = self.__expr.copy()
-        copy.__sense = self.__sense
-        return copy
+        return LinExpr(const=self.__const, sense=self.__sense, expr=self.__expr)
 
     def equals(self, other: "mip.LinExpr") -> bool:
         """returns true if a linear expression equals to another,
@@ -439,9 +362,14 @@ class LinExpr:
         If a solution is available, than this property indicates how much
         the current solution violates this constraint.
         """
+        # No violation can be computed for something that isn't a constraint
+        # or has no solution yet
+        if self.sense == "" or self.x is None:
+            return None
+
         lhs = sum(coef * var.x for (var, coef) in self.__expr.items())
         rhs = -self.const
-        viol = None
+
         if self.sense == "=":
             viol = abs(lhs - rhs)
         elif self.sense == "<":
@@ -588,12 +516,12 @@ class Constr:
         return self.__model.solver.constr_get_name(self.idx)
 
     @property
-    def priority(self) -> mip.constants.ConstraintPriority:
+    def priority(self) -> "mip.constants.ConstraintPriority":
         """priority value"""
         return self.__priority
 
     @priority.setter
-    def priority(self, priority: mip.constants.ConstraintPriority):
+    def priority(self, priority: "mip.constants.ConstraintPriority"):
         self.__priority = priority
 
 
@@ -601,14 +529,14 @@ class Var:
     """Decision variable of the :class:`~mip.Model`. The creation of
     variables is performed calling the :meth:`~mip.Model.add_var`."""
 
-    __slots__ = ["__model", "idx"]
+    __slots__ = ["_model", "_idx"]
 
     def __init__(self, model: "mip.Model", idx: int):
-        self.__model = model
-        self.idx = idx
+        self._model = model
+        self._idx = idx
 
     def __hash__(self) -> int:
-        return self.idx
+        return self._idx
 
     def __add__(
         self, other: Union["mip.Var", LinExpr, numbers.Real]
@@ -634,44 +562,40 @@ class Var:
     ) -> Union["mip.Var", LinExpr]:
         if isinstance(other, Var):
             return LinExpr([self, other], [1, -1])
-        elif isinstance(other, LinExpr):
+        if isinstance(other, LinExpr):
             return (-other).__add__(self)
-        elif isinstance(other, numbers.Real):
+        if isinstance(other, numbers.Real):
             if fabs(other) < mip.EPS:
                 return self
             return LinExpr([self], [1], -other)
-        else:
-            raise TypeError("type {} not supported".format(type(other)))
+
+        raise TypeError("type {} not supported".format(type(other)))
 
     def __rsub__(
         self, other: Union["mip.Var", LinExpr, numbers.Real]
     ) -> Union["mip.Var", LinExpr]:
         if isinstance(other, Var):
             return LinExpr([self, other], [-1, 1])
-        elif isinstance(other, LinExpr):
+        if isinstance(other, LinExpr):
             return other.__sub__(self)
-        elif isinstance(other, numbers.Real):
+        if isinstance(other, numbers.Real):
             return LinExpr([self], [-1], other)
-        else:
-            raise TypeError("type {} not supported".format(type(other)))
 
-    def __mul__(self, other: numbers.Real) -> Union["mip.Var", numbers.Real, LinExpr]:
+        raise TypeError("type {} not supported".format(type(other)))
+
+    def __mul__(self, other: numbers.Real) -> LinExpr:
         if not isinstance(other, numbers.Real):
             raise TypeError("Can not multiply with type {}".format(type(other)))
-        if fabs(other) < mip.EPS:
-            return other
-        if fabs(other - 1) < mip.EPS:
-            return self
         return LinExpr([self], [other])
 
-    def __rmul__(self, other: numbers.Real) -> Union["mip.Var", numbers.Real, LinExpr]:
+    def __rmul__(self, other: numbers.Real) -> LinExpr:
         return self.__mul__(other)
 
-    def __truediv__(
-        self, other: numbers.Real
-    ) -> Union["mip.Var", numbers.Real, LinExpr]:
+    def __truediv__(self, other: numbers.Real) -> LinExpr:
         if not isinstance(other, numbers.Real):
             raise TypeError("Can not divide with type {}".format(type(other)))
+        if abs(other) < mip.EPS:
+            raise ZeroDivisionError("Variable division by zero")
         return self.__mul__(1.0 / other)
 
     def __neg__(self) -> LinExpr:
@@ -680,43 +604,37 @@ class Var:
     def __eq__(self, other) -> LinExpr:
         if isinstance(other, Var):
             return LinExpr([self, other], [1, -1], sense="=")
-        elif isinstance(other, LinExpr):
-            return other == self
-        elif isinstance(other, numbers.Real):
-            if other != 0:
-                return LinExpr([self], [1], -1 * other, sense="=")
-            return LinExpr([self], [1], sense="=")
-        else:
-            raise TypeError("type {} not supported".format(type(other)))
+        if isinstance(other, LinExpr):
+            return LinExpr([self], [1]) == other
+        if isinstance(other, numbers.Real):
+            return LinExpr([self], [1], -1 * other, sense="=")
+
+        raise TypeError("type {} not supported".format(type(other)))
 
     def __le__(self, other: Union["mip.Var", LinExpr, numbers.Real]) -> LinExpr:
         if isinstance(other, Var):
             return LinExpr([self, other], [1, -1], sense="<")
-        elif isinstance(other, LinExpr):
-            return other >= self
-        elif isinstance(other, numbers.Real):
-            if other != 0:
-                return LinExpr([self], [1], -1 * other, sense="<")
-            return LinExpr([self], [1], sense="<")
-        else:
-            raise TypeError("type {} not supported".format(type(other)))
+        if isinstance(other, LinExpr):
+            return LinExpr([self], [1]) <= other
+        if isinstance(other, numbers.Real):
+            return LinExpr([self], [1], -1 * other, sense="<")
+
+        raise TypeError("type {} not supported".format(type(other)))
 
     def __ge__(self, other: Union["mip.Var", LinExpr, numbers.Real]) -> LinExpr:
         if isinstance(other, Var):
             return LinExpr([self, other], [1, -1], sense=">")
-        elif isinstance(other, LinExpr):
-            return other <= self
-        elif isinstance(other, numbers.Real):
-            if other != 0:
-                return LinExpr([self], [1], -1 * other, sense=">")
-            return LinExpr([self], [1], sense=">")
-        else:
-            raise TypeError("type {} not supported".format(type(other)))
+        if isinstance(other, LinExpr):
+            return LinExpr([self], [1]) >= other
+        if isinstance(other, numbers.Real):
+            return LinExpr([self], [1], -1 * other, sense=">")
+
+        raise TypeError("type {} not supported".format(type(other)))
 
     @property
     def name(self) -> str:
         """Variable name."""
-        return self.__model.solver.var_get_name(self.idx)
+        return self._model.solver.var_get_name(self.idx)
 
     def __str__(self) -> str:
         return self.name
@@ -724,29 +642,29 @@ class Var:
     @property
     def lb(self) -> numbers.Real:
         """Variable lower bound."""
-        return self.__model.solver.var_get_lb(self)
+        return self._model.solver.var_get_lb(self)
 
     @lb.setter
     def lb(self, value: numbers.Real):
-        self.__model.solver.var_set_lb(self, value)
+        self._model.solver.var_set_lb(self, value)
 
     @property
     def ub(self) -> numbers.Real:
         """Variable upper bound."""
-        return self.__model.solver.var_get_ub(self)
+        return self._model.solver.var_get_ub(self)
 
     @ub.setter
     def ub(self, value: numbers.Real):
-        self.__model.solver.var_set_ub(self, value)
+        self._model.solver.var_set_ub(self, value)
 
     @property
     def obj(self) -> numbers.Real:
         """Coefficient of variable in the objective function."""
-        return self.__model.solver.var_get_obj(self)
+        return self._model.solver.var_get_obj(self)
 
     @obj.setter
     def obj(self, value: numbers.Real):
-        self.__model.solver.var_set_obj(self, value)
+        self._model.solver.var_set_obj(self, value)
 
     @property
     def branch_priority(self) -> numbers.Real:
@@ -754,16 +672,16 @@ class Var:
         Variable's branching priority in the branch and bound process.
         Note: variables with higher priority are selected first. Default value is zero.
         """
-        return self.__model.solver.var_get_branch_priority(self)
+        return self._model.solver.var_get_branch_priority(self)
 
     @branch_priority.setter
     def branch_priority(self, value: numbers.Real):
-        self.__model.solver.var_set_branch_priority(self, value)
+        self._model.solver.var_set_branch_priority(self, value)
 
     @property
     def var_type(self) -> str:
         """Variable type, ('B') BINARY, ('C') CONTINUOUS and ('I') INTEGER."""
-        return self.__model.solver.var_get_var_type(self)
+        return self._model.solver.var_get_var_type(self)
 
     @var_type.setter
     def var_type(self, value: str):
@@ -773,7 +691,7 @@ class Var:
                     (mip.BINARY, mip.CONTINUOUS, mip.INTEGER), value
                 )
             )
-        self.__model.solver.var_set_var_type(self, value)
+        self._model.solver.var_set_var_type(self, value)
 
     @property
     def column(self) -> Column:
@@ -781,11 +699,11 @@ class Var:
 
         :rtype: mip.Column
         """
-        return self.__model.solver.var_get_column(self)
+        return self._model.solver.var_get_column(self)
 
     @column.setter
     def column(self, value: Column):
-        self.__model.solver.var_set_column(self, value)
+        self._model.solver.var_set_column(self, value)
 
     @property
     def rc(self) -> Optional[numbers.Real]:
@@ -793,22 +711,22 @@ class Var:
         continuous variables) is optimized. Note that None is returned if no
         optimum solution is available"""
 
-        return self.__model.solver.var_get_rc(self)
+        return self._model.solver.var_get_rc(self)
 
     @property
     def x(self) -> Optional[numbers.Real]:
         """Value of this variable in the solution. Note that None is returned
         if no solution is not available."""
-        return self.__model.solver.var_get_x(self)
+        return self._model.solver.var_get_x(self)
 
     def xi(self, i: int) -> Optional[numbers.Real]:
         """Value for this variable in the :math:`i`-th solution from the solution
         pool. Note that None is returned if the solution is not available."""
-        if self.__model.status in [
+        if self._model.status in [
             mip.OptimizationStatus.OPTIMAL,
             mip.OptimizationStatus.FEASIBLE,
         ]:
-            return self.__model.solver.var_get_xi(self, i)
+            return self._model.solver.var_get_xi(self, i)
         return None
 
     def __float__(self):
@@ -821,12 +739,20 @@ class Var:
 
         :rtype: mip.Model
         """
-        return self.__model
+        return self._model
+
+    @property
+    def idx(self) -> int:
+        """Internal index of the variable to the model.
+
+        :rtype: int
+        """
+        return self._idx
 
 
 class ConflictGraph:
 
-    """A conflict graph stores conflicts between incompatible assignments in
+    r"""A conflict graph stores conflicts between incompatible assignments in
     binary variables.
 
     For example, if there is a constraint :math:`x_1 + x_2 \leq 1` then

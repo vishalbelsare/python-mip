@@ -4,6 +4,7 @@ import logging
 from typing import Dict, List, Tuple, Optional, Union
 from sys import platform, maxsize
 from os.path import dirname, isfile, exists
+from platform import machine as platform_machine
 import os
 import multiprocessing as multip
 import numbers
@@ -45,7 +46,7 @@ warningMessages = 0
 
 ffi = FFI()
 has_cbc = False
-os_is_64_bit = maxsize > 2 ** 32
+os_is_64_bit = maxsize > 2**32
 INF = float("inf")
 cut_idx = 0
 
@@ -97,7 +98,9 @@ try:
         elif platform.lower().startswith("darwin") or platform.lower().startswith(
             "macos"
         ):
-            if os_is_64_bit:
+            if platform_machine().lower().startswith("arm64"):
+                libfile = os.path.join(pathlib, "cbc-c-darwin-arm64.dylib")
+            elif os_is_64_bit:
                 libfile = os.path.join(pathlib, "cbc-c-darwin-x86-64.dylib")
         if not libfile:
             raise NotImplementedError("You operating system/platform is not supported")
@@ -1170,8 +1173,8 @@ class SolverCbc(Solver):
             cbc_set_parameter(self, "lift", "ifmove")
 
         if self.__threads >= 1:
-            cbc_set_parameter(self, "timeM", "{}".format("elapsed"))
-            Cbc_setIntParam(self._model, INT_PARAM_THREADS, self.__threads)
+            cbc_set_parameter(self, "timeMode", "{}".format("elapsed"))
+            cbc_set_parameter(self, "threads", "{}".format(self.__threads))
         elif self.__threads == -1:
             cbc_set_parameter(self, "threads", "{}".format(multip.cpu_count()))
 
@@ -1358,6 +1361,9 @@ class SolverCbc(Solver):
     def var_get_index(self, name: str) -> int:
         return cbclib.Cbc_getColNameIndex(self._model, name.encode("utf-8"))
 
+    def var_get_branch_priority(self, var: "Var") -> numbers.Real:
+        return 0  # todo: modify branch priority in CBC
+
     def constr_get_index(self, name: str) -> int:
         return cbclib.Cbc_getRowNameIndex(self._model, name.encode("utf-8"))
 
@@ -1382,6 +1388,9 @@ class SolverCbc(Solver):
 
         return CONTINUOUS
 
+    def var_set_column(self, var: "Var", value: Column):
+        raise NotImplementedError("Cbc functionality currently unavailable")
+
     def var_get_column(self, var: "Var") -> Column:
         numnz = cbclib.Cbc_getColNz(self._model, var.idx)
         if numnz == 0:
@@ -1393,13 +1402,16 @@ class SolverCbc(Solver):
         ccoef = cbclib.Cbc_getColCoeffs(self._model, var.idx)
 
         return Column(
-            [Constr(self.model, cidx[i]) for i in range(numnz)],
+            [self.model.constrs[cidx[i]] for i in range(numnz)],
             [ccoef[i] for i in range(numnz)],
         )
 
     def add_constr(self, lin_expr: LinExpr, name: str = ""):
         # collecting linear expression data
-        numnz = len(lin_expr.expr)
+
+        # In case of empty linear expression add dummy row
+        # by setting first index of row explicitly with 0
+        numnz = len(lin_expr.expr) or 1
 
         if numnz > self.iidx_space:
             self.iidx_space = max(numnz, self.iidx_space * 2)
@@ -1407,12 +1419,12 @@ class SolverCbc(Solver):
             self.dvec = ffi.new("double[%d]" % self.iidx_space)
 
         # cind = self.iidx
-        self.iidx = [var.idx for var in lin_expr.expr.keys()]
+        self.iidx = [var.idx for var in lin_expr.expr.keys()] or [0]
 
         # cind = ffi.new("int[]", [var.idx for var in lin_expr.expr.keys()])
         # cval = ffi.new("double[]", [coef for coef in lin_expr.expr.values()])
         # cval = self.dvec
-        self.dvec = [coef for coef in lin_expr.expr.values()]
+        self.dvec = [coef for coef in lin_expr.expr.values()] or [0]
 
         # constraint sense and rhs
         sense = lin_expr.sense.encode("utf-8")
@@ -1494,10 +1506,25 @@ class SolverCbc(Solver):
             )
 
     def set_start(self, start: List[Tuple[Var, numbers.Real]]) -> None:
-        n = len(start)
-        dv = ffi.new("double[]", [start[i][1] for i in range(n)])
+        # Augment start list with default zero values for absent non-continuous variables
+        start_vars_set = set(var for var, _ in start)
+
+        default_start_noncont_vars = [
+            (v, 0)
+            for v in self.model.vars
+            if v.var_type != "C" and v not in start_vars_set
+        ]
+
+        logger.info(
+            f"Adding default start values for {len(default_start_noncont_vars)} noncontinuous variables"
+        )
+        augmented_start = start + default_start_noncont_vars
+
+        # Set starts
+        n = len(augmented_start)
+        dv = ffi.new("double[]", [augmented_start[i][1] for i in range(n)])
         keep_alive_str = [
-            ffi.new("char[]", str.encode(start[i][0].name)) for i in range(n)
+            ffi.new("char[]", str.encode(augmented_start[i][0].name)) for i in range(n)
         ]
         var_names = ffi.new("char *[]", keep_alive_str)
         mdl = self._model
